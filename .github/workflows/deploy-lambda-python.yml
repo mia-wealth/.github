@@ -1,0 +1,76 @@
+name: Deploy to Lambda (Python)
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        required: true
+        type: string
+      python-version:
+        required: true
+        type: string
+      lambda-url:
+        required: true
+        type: string
+      aws-region:
+        required: true
+        type: string
+    secrets:
+      AWS_ACCESS_KEY_ID:
+        required: true
+      AWS_SECRET_ACCESS_KEY:
+        required: true
+      FUNCTION_NAME:
+        required: true
+      S3_BUCKET:
+        required: false
+
+jobs:
+
+  prepare:
+    name: Prepare For Deployment
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.get-sha.outputs.SHA }}
+    steps:
+
+      - name: Get SHA
+        id: get-sha
+        run: echo "SHA=${GITHUB_SHA:0:8}" >> $GITHUB_OUTPUT
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ inputs.python-version }}
+
+      - name: Install pipenv
+        run: |
+          pip install pipenv
+
+      - name: Install dependencies
+        run: |
+          pipenv install --deploy --ignore-pipfile
+
+      - name: Package Lambda and dependencies
+        run: |
+          pipenv run pip freeze | xargs pip install --no-cache-dir -t .
+          zip -r lambda.zip . -x "*.git*" "*__pycache__*" "*venv*" "Pipfile*" "*.log" "*.yml" "*.md" "*.editorconfig" "LICENSE" "NOTICE"
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: lambda-zip
+          path: lambda.zip
+
+  deploy:
+    name: Deploy
+    needs: [ prepare ]
+    uses: mia-wealth/.github/.github/workflows/deploy-lambda.yml@master
+    with:
+      environment: ${{ inputs.environment }}
+      sha: ${{ needs.prepare.outputs.sha }}
+      aws-region: ${{ inputs.aws-region }}
+    secrets: inherit
